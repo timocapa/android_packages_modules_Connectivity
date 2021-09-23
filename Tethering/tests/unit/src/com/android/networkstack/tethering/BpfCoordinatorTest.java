@@ -24,13 +24,6 @@ import static android.net.NetworkStats.TAG_NONE;
 import static android.net.NetworkStats.UID_ALL;
 import static android.net.NetworkStats.UID_TETHERING;
 import static android.net.ip.ConntrackMonitor.ConntrackEvent;
-import static android.net.netlink.ConntrackMessage.DYING_MASK;
-import static android.net.netlink.ConntrackMessage.ESTABLISHED_MASK;
-import static android.net.netlink.ConntrackMessage.Tuple;
-import static android.net.netlink.ConntrackMessage.TupleIpv4;
-import static android.net.netlink.ConntrackMessage.TupleProto;
-import static android.net.netlink.NetlinkConstants.IPCTNL_MSG_CT_DELETE;
-import static android.net.netlink.NetlinkConstants.IPCTNL_MSG_CT_NEW;
 import static android.net.netstats.provider.NetworkStatsProvider.QUOTA_UNLIMITED;
 import static android.system.OsConstants.ETH_P_IP;
 import static android.system.OsConstants.ETH_P_IPV6;
@@ -40,9 +33,16 @@ import static android.system.OsConstants.NETLINK_NETFILTER;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.staticMockMarker;
+import static com.android.net.module.util.netlink.ConntrackMessage.DYING_MASK;
+import static com.android.net.module.util.netlink.ConntrackMessage.ESTABLISHED_MASK;
+import static com.android.net.module.util.netlink.ConntrackMessage.Tuple;
+import static com.android.net.module.util.netlink.ConntrackMessage.TupleIpv4;
+import static com.android.net.module.util.netlink.ConntrackMessage.TupleProto;
+import static com.android.net.module.util.netlink.NetlinkConstants.IPCTNL_MSG_CT_DELETE;
+import static com.android.net.module.util.netlink.NetlinkConstants.IPCTNL_MSG_CT_NEW;
+import static com.android.networkstack.tethering.BpfCoordinator.CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS;
 import static com.android.networkstack.tethering.BpfCoordinator.NF_CONNTRACK_TCP_TIMEOUT_ESTABLISHED;
 import static com.android.networkstack.tethering.BpfCoordinator.NF_CONNTRACK_UDP_TIMEOUT_STREAM;
-import static com.android.networkstack.tethering.BpfCoordinator.POLLING_CONNTRACK_TIMEOUT_MS;
 import static com.android.networkstack.tethering.BpfCoordinator.StatsType;
 import static com.android.networkstack.tethering.BpfCoordinator.StatsType.STATS_PER_IFACE;
 import static com.android.networkstack.tethering.BpfCoordinator.StatsType.STATS_PER_UID;
@@ -82,9 +82,6 @@ import android.net.TetherStatsParcel;
 import android.net.ip.ConntrackMonitor;
 import android.net.ip.ConntrackMonitor.ConntrackEventConsumer;
 import android.net.ip.IpServer;
-import android.net.netlink.ConntrackMessage;
-import android.net.netlink.NetlinkConstants;
-import android.net.netlink.NetlinkSocket;
 import android.net.util.InterfaceParams;
 import android.net.util.SharedLog;
 import android.os.Build;
@@ -100,6 +97,9 @@ import androidx.test.runner.AndroidJUnit4;
 import com.android.dx.mockito.inline.extended.ExtendedMockito;
 import com.android.net.module.util.NetworkStackConstants;
 import com.android.net.module.util.Struct;
+import com.android.net.module.util.netlink.ConntrackMessage;
+import com.android.net.module.util.netlink.NetlinkConstants;
+import com.android.net.module.util.netlink.NetlinkSocket;
 import com.android.networkstack.tethering.BpfCoordinator.BpfConntrackEventConsumer;
 import com.android.networkstack.tethering.BpfCoordinator.ClientInfo;
 import com.android.networkstack.tethering.BpfCoordinator.Ipv6ForwardingRule;
@@ -1544,14 +1544,14 @@ public class BpfCoordinatorTest {
         // Timeline:
         // 0                                       60 (seconds)
         // +---+---+---+---+--...--+---+---+---+---+---+- ..
-        // |      POLLING_CONNTRACK_TIMEOUT_MS     |
+        // | CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS  |
         // +---+---+---+---+--...--+---+---+---+---+---+- ..
         // |<-          valid diff           ->|
         // |<-          expired diff                 ->|
         // ^                                   ^       ^
         // last used time      elapsed time (valid)    elapsed time (expired)
-        final long validTime = (POLLING_CONNTRACK_TIMEOUT_MS - 1) * 1_000_000L;
-        final long expiredTime = (POLLING_CONNTRACK_TIMEOUT_MS + 1) * 1_000_000L;
+        final long validTime = (CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS - 1) * 1_000_000L;
+        final long expiredTime = (CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS + 1) * 1_000_000L;
 
         // Static mocking for NetlinkSocket.
         MockitoSession mockSession = ExtendedMockito.mockitoSession()
@@ -1565,14 +1565,14 @@ public class BpfCoordinatorTest {
 
             // [1] Don't refresh contrack timeout.
             setElapsedRealtimeNanos(expiredTime);
-            mTestLooper.moveTimeForward(POLLING_CONNTRACK_TIMEOUT_MS);
+            mTestLooper.moveTimeForward(CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS);
             waitForIdle();
             ExtendedMockito.verifyNoMoreInteractions(staticMockMarker(NetlinkSocket.class));
             ExtendedMockito.clearInvocations(staticMockMarker(NetlinkSocket.class));
 
             // [2] Refresh contrack timeout.
             setElapsedRealtimeNanos(validTime);
-            mTestLooper.moveTimeForward(POLLING_CONNTRACK_TIMEOUT_MS);
+            mTestLooper.moveTimeForward(CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS);
             waitForIdle();
             final byte[] expectedNetlinkTcp = ConntrackMessage.newIPv4TimeoutUpdateRequest(
                     IPPROTO_TCP, PRIVATE_ADDR, (int) PRIVATE_PORT, REMOTE_ADDR,
@@ -1589,7 +1589,7 @@ public class BpfCoordinatorTest {
 
             // [3] Don't refresh contrack timeout if polling stopped.
             coordinator.stopPolling();
-            mTestLooper.moveTimeForward(POLLING_CONNTRACK_TIMEOUT_MS);
+            mTestLooper.moveTimeForward(CONNTRACK_TIMEOUT_UPDATE_INTERVAL_MS);
             waitForIdle();
             ExtendedMockito.verifyNoMoreInteractions(staticMockMarker(NetlinkSocket.class));
             ExtendedMockito.clearInvocations(staticMockMarker(NetlinkSocket.class));
