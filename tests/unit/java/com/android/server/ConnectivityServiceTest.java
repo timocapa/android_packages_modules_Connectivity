@@ -126,10 +126,10 @@ import static android.os.Process.INVALID_UID;
 import static android.system.OsConstants.IPPROTO_TCP;
 
 import static com.android.server.ConnectivityService.MAX_NETWORK_REQUESTS_PER_SYSTEM_UID;
-import static com.android.server.ConnectivityService.PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED;
-import static com.android.server.ConnectivityService.PREFERENCE_PRIORITY_OEM;
-import static com.android.server.ConnectivityService.PREFERENCE_PRIORITY_PROFILE;
-import static com.android.server.ConnectivityService.PREFERENCE_PRIORITY_VPN;
+import static com.android.server.ConnectivityService.PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED;
+import static com.android.server.ConnectivityService.PREFERENCE_ORDER_OEM;
+import static com.android.server.ConnectivityService.PREFERENCE_ORDER_PROFILE;
+import static com.android.server.ConnectivityService.PREFERENCE_ORDER_VPN;
 import static com.android.server.ConnectivityServiceTestUtils.transportToLegacyType;
 import static com.android.testutils.ConcurrentUtils.await;
 import static com.android.testutils.ConcurrentUtils.durationOf;
@@ -176,6 +176,8 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+
+import static java.util.Arrays.asList;
 
 import android.Manifest;
 import android.annotation.NonNull;
@@ -311,7 +313,6 @@ import com.android.connectivity.resources.R;
 import com.android.internal.app.IBatteryStats;
 import com.android.internal.net.VpnConfig;
 import com.android.internal.net.VpnProfile;
-import com.android.internal.util.ArrayUtils;
 import com.android.internal.util.WakeupMessage;
 import com.android.internal.util.test.BroadcastInterceptingContext;
 import com.android.internal.util.test.FakeSettingsProvider;
@@ -1203,20 +1204,14 @@ public class ConnectivityServiceTest {
             assertEquals(count, getMyRequestCount());
         }
 
-        @Override
-        public void terminate() {
-            super.terminate();
-            // Make sure there are no remaining requests unaccounted for.
-            HandlerUtils.waitForIdle(mHandlerSendingRequests, TIMEOUT_MS);
-            assertNull(mRequestHistory.poll(0, r -> true));
-        }
-
         // Trigger releasing the request as unfulfillable
         public void triggerUnfulfillable(NetworkRequest r) {
             super.releaseRequestAsUnfulfillableByAnyFactory(r);
         }
 
         public void assertNoRequestChanged() {
+            // Make sure there are no remaining requests unaccounted for.
+            HandlerUtils.waitForIdle(mHandlerSendingRequests, TIMEOUT_MS);
             assertNull(mRequestHistory.poll(0, r -> true));
         }
     }
@@ -1334,10 +1329,10 @@ public class ConnectivityServiceTest {
 
             verify(mMockNetd, times(1)).networkAddUidRangesParcel(
                     new NativeUidRangeConfig(mMockVpn.getNetwork().getNetId(),
-                            toUidRangeStableParcels(uids), PREFERENCE_PRIORITY_VPN));
+                            toUidRangeStableParcels(uids), PREFERENCE_ORDER_VPN));
             verify(mMockNetd, never()).networkRemoveUidRangesParcel(argThat(config ->
                     mMockVpn.getNetwork().getNetId() == config.netId
-                            && PREFERENCE_PRIORITY_VPN == config.subPriority));
+                            && PREFERENCE_ORDER_VPN == config.subPriority));
             mAgentRegistered = true;
             verify(mMockNetd).networkCreate(nativeNetworkConfigVpn(getNetwork().netId,
                     !mMockNetworkAgent.isBypassableVpn(), mVpnType));
@@ -1566,7 +1561,7 @@ public class ConnectivityServiceTest {
     }
 
     private <T> T doAsUid(final int uid, @NonNull final Supplier<T> what) {
-        when(mDeps.getCallingUid()).thenReturn(uid);
+        doReturn(uid).when(mDeps).getCallingUid();
         try {
             return what.get();
         } finally {
@@ -1647,9 +1642,8 @@ public class ConnectivityServiceTest {
 
         MockitoAnnotations.initMocks(this);
 
-        when(mUserManager.getAliveUsers()).thenReturn(Arrays.asList(PRIMARY_USER_INFO));
-        when(mUserManager.getUserHandles(anyBoolean())).thenReturn(
-                Arrays.asList(PRIMARY_USER_HANDLE));
+        when(mUserManager.getAliveUsers()).thenReturn(asList(PRIMARY_USER_INFO));
+        when(mUserManager.getUserHandles(anyBoolean())).thenReturn(asList(PRIMARY_USER_HANDLE));
         when(mUserManager.getUserInfo(PRIMARY_USER)).thenReturn(PRIMARY_USER_INFO);
         // canHaveRestrictedProfile does not take a userId. It applies to the userId of the context
         // it was started from, i.e., PRIMARY_USER.
@@ -1857,7 +1851,7 @@ public class ConnectivityServiceTest {
                 eq(UserHandle.getCallingUserId()))).thenReturn(myPackageInfo);
 
         when(mPackageManager.getInstalledPackages(eq(GET_PERMISSIONS | MATCH_ANY_USER))).thenReturn(
-                Arrays.asList(new PackageInfo[] {
+                asList(new PackageInfo[] {
                         buildPackageInfo(/* SYSTEM */ false, APP1_UID),
                         buildPackageInfo(/* SYSTEM */ false, APP2_UID),
                         buildPackageInfo(/* SYSTEM */ false, VPN_UID)
@@ -1874,7 +1868,7 @@ public class ConnectivityServiceTest {
         ResolveInfo rInfo = new ResolveInfo();
         rInfo.serviceInfo = new ServiceInfo();
         rInfo.serviceInfo.metaData = new Bundle();
-        final List<ResolveInfo> services = Arrays.asList(new ResolveInfo[]{rInfo});
+        final List<ResolveInfo> services = asList(new ResolveInfo[]{rInfo});
         when(mPackageManager.queryIntentServicesAsUser(any(), eq(PackageManager.GET_META_DATA),
                 eq(userId))).thenReturn(services);
         when(mPackageManager.getPackageUidAsUser(TEST_PACKAGE_NAME, userId))
@@ -2249,6 +2243,7 @@ public class ConnectivityServiceTest {
         deathRecipient.get().binderDied();
         // Wait for the release message to be processed.
         waitForIdle();
+        // After waitForIdle(), the message was processed and the service didn't crash.
     }
 
     @Test
@@ -3317,6 +3312,7 @@ public class ConnectivityServiceTest {
         assertTrue(testFactory.getMyStartRequested());
 
         testFactory.terminate();
+        testFactory.assertNoRequestChanged();
         if (networkCallback != null) mCm.unregisterNetworkCallback(networkCallback);
         handlerThread.quit();
     }
@@ -3401,6 +3397,7 @@ public class ConnectivityServiceTest {
 
             testFactory.setScoreFilter(42);
             testFactory.terminate();
+            testFactory.assertNoRequestChanged();
 
             if (i % 2 == 0) {
                 try {
@@ -4820,6 +4817,9 @@ public class ConnectivityServiceTest {
             // and the test factory should see it now that it isn't hopelessly outscored.
             mCellNetworkAgent.disconnect();
             cellNetworkCallback.expectCallback(CallbackEntry.LOST, mCellNetworkAgent);
+            // Wait for the network to be removed from internal structures before
+            // calling synchronous getter
+            waitForIdle();
             assertLength(1, mCm.getAllNetworks());
             testFactory.expectRequestAdd();
             testFactory.assertRequestCountEquals(1);
@@ -4830,6 +4830,7 @@ public class ConnectivityServiceTest {
             mCellNetworkAgent = new TestNetworkAgentWrapper(TRANSPORT_CELLULAR);
             mCellNetworkAgent.connect(true);
             cellNetworkCallback.expectAvailableThenValidatedCallbacks(mCellNetworkAgent);
+            waitForIdle();
             assertLength(2, mCm.getAllNetworks());
             testFactory.expectRequestRemove();
             testFactory.assertRequestCountEquals(0);
@@ -4841,8 +4842,9 @@ public class ConnectivityServiceTest {
             cellNetworkCallback.expectCallback(CallbackEntry.LOST, mCellNetworkAgent);
             waitForIdle();
             assertLength(1, mCm.getAllNetworks());
-        } finally {
             testFactory.terminate();
+            testFactory.assertNoRequestChanged();
+        } finally {
             mCm.unregisterNetworkCallback(cellNetworkCallback);
             handlerThread.quit();
         }
@@ -4911,7 +4913,6 @@ public class ConnectivityServiceTest {
         testAvoidBadWifiConfig_controlledBySettings();
     }
 
-    @Ignore("Refactoring in progress b/178071397")
     @Test
     public void testAvoidBadWifi() throws Exception {
         final ContentResolver cr = mServiceContext.getContentResolver();
@@ -5041,8 +5042,8 @@ public class ConnectivityServiceTest {
         final ContentResolver cr = mServiceContext.getContentResolver();
         final String settingName = ConnectivitySettingsManager.NETWORK_METERED_MULTIPATH_PREFERENCE;
 
-        for (int config : Arrays.asList(0, 3, 2)) {
-            for (String setting: Arrays.asList(null, "0", "2", "1")) {
+        for (int config : asList(0, 3, 2)) {
+            for (String setting: asList(null, "0", "2", "1")) {
                 mPolicyTracker.mConfigMeteredMultipathPreference = config;
                 Settings.Global.putString(cr, settingName, setting);
                 mPolicyTracker.reevaluate();
@@ -6201,10 +6202,10 @@ public class ConnectivityServiceTest {
         networkCallback.expectCallback(CallbackEntry.BLOCKED_STATUS, networkAgent);
         networkCallback.expectCapabilitiesWith(NET_CAPABILITY_VALIDATED, networkAgent);
         networkCallback.assertNoCallback();
-        checkDirectlyConnectedRoutes(cbi.getLp(), Arrays.asList(myIpv4Address),
-                Arrays.asList(myIpv4DefaultRoute));
+        checkDirectlyConnectedRoutes(cbi.getLp(), asList(myIpv4Address),
+                asList(myIpv4DefaultRoute));
         checkDirectlyConnectedRoutes(mCm.getLinkProperties(networkAgent.getNetwork()),
-                Arrays.asList(myIpv4Address), Arrays.asList(myIpv4DefaultRoute));
+                asList(myIpv4Address), asList(myIpv4DefaultRoute));
 
         // Verify direct routes are added during subsequent link properties updates.
         LinkProperties newLp = new LinkProperties(lp);
@@ -6216,8 +6217,8 @@ public class ConnectivityServiceTest {
         cbi = networkCallback.expectCallback(CallbackEntry.LINK_PROPERTIES_CHANGED, networkAgent);
         networkCallback.assertNoCallback();
         checkDirectlyConnectedRoutes(cbi.getLp(),
-                Arrays.asList(myIpv4Address, myIpv6Address1, myIpv6Address2),
-                Arrays.asList(myIpv4DefaultRoute));
+                asList(myIpv4Address, myIpv6Address1, myIpv6Address2),
+                asList(myIpv4DefaultRoute));
         mCm.unregisterNetworkCallback(networkCallback);
     }
 
@@ -6545,9 +6546,9 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         ResolverParamsParcel resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(1, resolvrParams.servers.length);
-        assertTrue(ArrayUtils.contains(resolvrParams.servers, "2001:db8::1"));
+        assertTrue(CollectionUtils.contains(resolvrParams.servers, "2001:db8::1"));
         // Opportunistic mode.
-        assertTrue(ArrayUtils.contains(resolvrParams.tlsServers, "2001:db8::1"));
+        assertTrue(CollectionUtils.contains(resolvrParams.tlsServers, "2001:db8::1"));
         reset(mMockDnsResolver);
 
         cellLp.addDnsServer(InetAddress.getByName("192.0.2.1"));
@@ -6557,12 +6558,12 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(2, resolvrParams.servers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.servers,
-                new String[]{"2001:db8::1", "192.0.2.1"}));
+        assertTrue(new ArraySet<>(resolvrParams.servers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         // Opportunistic mode.
         assertEquals(2, resolvrParams.tlsServers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.tlsServers,
-                new String[]{"2001:db8::1", "192.0.2.1"}));
+        assertTrue(new ArraySet<>(resolvrParams.tlsServers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         reset(mMockDnsResolver);
 
         final String TLS_SPECIFIER = "tls.example.com";
@@ -6577,8 +6578,8 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(2, resolvrParams.servers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.servers,
-                new String[]{"2001:db8::1", "192.0.2.1"}));
+        assertTrue(new ArraySet<>(resolvrParams.servers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         reset(mMockDnsResolver);
     }
 
@@ -6685,12 +6686,12 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         ResolverParamsParcel resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(2, resolvrParams.tlsServers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.tlsServers,
-                new String[] { "2001:db8::1", "192.0.2.1" }));
+        assertTrue(new ArraySet<>(resolvrParams.tlsServers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         // Opportunistic mode.
         assertEquals(2, resolvrParams.tlsServers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.tlsServers,
-                new String[] { "2001:db8::1", "192.0.2.1" }));
+        assertTrue(new ArraySet<>(resolvrParams.tlsServers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         reset(mMockDnsResolver);
         cellNetworkCallback.expectCallback(CallbackEntry.AVAILABLE, mCellNetworkAgent);
         cellNetworkCallback.expectCallback(CallbackEntry.NETWORK_CAPS_UPDATED,
@@ -6707,8 +6708,8 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(2, resolvrParams.servers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.servers,
-                new String[] { "2001:db8::1", "192.0.2.1" }));
+        assertTrue(new ArraySet<>(resolvrParams.servers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         reset(mMockDnsResolver);
         cellNetworkCallback.assertNoCallback();
 
@@ -6717,11 +6718,11 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(2, resolvrParams.servers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.servers,
-                new String[] { "2001:db8::1", "192.0.2.1" }));
+        assertTrue(new ArraySet<>(resolvrParams.servers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         assertEquals(2, resolvrParams.tlsServers.length);
-        assertTrue(ArrayUtils.containsAll(resolvrParams.tlsServers,
-                new String[] { "2001:db8::1", "192.0.2.1" }));
+        assertTrue(new ArraySet<>(resolvrParams.tlsServers).containsAll(
+                asList("2001:db8::1", "192.0.2.1")));
         reset(mMockDnsResolver);
         cellNetworkCallback.assertNoCallback();
 
@@ -7757,7 +7758,7 @@ public class ConnectivityServiceTest {
         // Start the restricted profile, and check that the UID within it loses network access.
         when(mPackageManager.getPackageUidAsUser(ALWAYS_ON_PACKAGE, RESTRICTED_USER))
                 .thenReturn(UserHandle.getUid(RESTRICTED_USER, VPN_UID));
-        when(mUserManager.getAliveUsers()).thenReturn(Arrays.asList(PRIMARY_USER_INFO,
+        when(mUserManager.getAliveUsers()).thenReturn(asList(PRIMARY_USER_INFO,
                 RESTRICTED_USER_INFO));
         // TODO: check that VPN app within restricted profile still has access, etc.
         final Intent addedIntent = new Intent(ACTION_USER_ADDED);
@@ -7768,7 +7769,7 @@ public class ConnectivityServiceTest {
         assertNull(mCm.getActiveNetworkForUid(restrictedUid));
 
         // Stop the restricted profile, and check that the UID within it has network access again.
-        when(mUserManager.getAliveUsers()).thenReturn(Arrays.asList(PRIMARY_USER_INFO));
+        when(mUserManager.getAliveUsers()).thenReturn(asList(PRIMARY_USER_INFO));
 
         // Send a USER_REMOVED broadcast and expect to lose the UID range for the restricted user.
         final Intent removedIntent = new Intent(ACTION_USER_REMOVED);
@@ -8193,7 +8194,7 @@ public class ConnectivityServiceTest {
     // networks, ConnectivityService does not guarantee the order in which callbacks are fired.
     private void assertBlockedCallbackInAnyOrder(TestNetworkCallback callback, boolean blocked,
             TestNetworkAgentWrapper... agents) {
-        final List<Network> expectedNetworks = Arrays.asList(agents).stream()
+        final List<Network> expectedNetworks = asList(agents).stream()
                 .map((agent) -> agent.getNetwork())
                 .collect(Collectors.toList());
 
@@ -8889,7 +8890,7 @@ public class ConnectivityServiceTest {
                 mResolverParamsParcelCaptor.capture());
         ResolverParamsParcel resolvrParams = mResolverParamsParcelCaptor.getValue();
         assertEquals(1, resolvrParams.servers.length);
-        assertTrue(ArrayUtils.contains(resolvrParams.servers, "8.8.8.8"));
+        assertTrue(CollectionUtils.contains(resolvrParams.servers, "8.8.8.8"));
 
         for (final LinkProperties stackedLp : stackedLpsAfterChange) {
             verify(mDeps).reportNetworkInterfaceForTransports(
@@ -9575,7 +9576,7 @@ public class ConnectivityServiceTest {
         InOrder inOrder = inOrder(mMockNetd);
 
         // Update to new range which is old range minus APP1, i.e. only APP2
-        final Set<UidRange> newRanges = new HashSet<>(Arrays.asList(
+        final Set<UidRange> newRanges = new HashSet<>(asList(
                 new UidRange(vpnRange.start, APP1_UID - 1),
                 new UidRange(APP1_UID + 1, vpnRange.stop)));
         mMockVpn.setUids(newRanges);
@@ -10067,9 +10068,9 @@ public class ConnectivityServiceTest {
         assertVpnUidRangesUpdated(true, vpnRange, vpnOwnerUid);
 
         final UnderlyingNetworkInfo underlyingNetworkInfo =
-                new UnderlyingNetworkInfo(vpnOwnerUid, VPN_IFNAME, new ArrayList<String>());
+                new UnderlyingNetworkInfo(vpnOwnerUid, VPN_IFNAME, new ArrayList<>());
         mMockVpn.setUnderlyingNetworkInfo(underlyingNetworkInfo);
-        when(mDeps.getConnectionOwnerUid(anyInt(), any(), any())).thenReturn(42);
+        doReturn(42).when(mDeps).getConnectionOwnerUid(anyInt(), any(), any());
     }
 
     private void setupConnectionOwnerUidAsVpnApp(int vpnOwnerUid, @VpnManager.VpnType int vpnType)
@@ -10427,10 +10428,7 @@ public class ConnectivityServiceTest {
         mService.registerConnectivityDiagnosticsCallback(
                 mConnectivityDiagnosticsCallback, request, mContext.getPackageName());
 
-        // Block until all other events are done processing.
-        HandlerUtils.waitForIdle(mCsHandlerThread, TIMEOUT_MS);
-
-        verify(mConnectivityDiagnosticsCallback)
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
                 .onConnectivityReportAvailable(argThat(report -> {
                     return INTERFACE_NAME.equals(report.getLinkProperties().getInterfaceName())
                             && report.getNetworkCapabilities().hasTransport(TRANSPORT_CELLULAR);
@@ -10464,13 +10462,13 @@ public class ConnectivityServiceTest {
     }
 
     private boolean areConnDiagCapsRedacted(NetworkCapabilities nc) {
-        TestTransportInfo ti = (TestTransportInfo) nc.getTransportInfo();
+        TestTransportInfo ti = getTestTransportInfo(nc);
         return nc.getUids() == null
                 && nc.getAdministratorUids().length == 0
                 && nc.getOwnerUid() == Process.INVALID_UID
-                && getTestTransportInfo(nc).locationRedacted
-                && getTestTransportInfo(nc).localMacAddressRedacted
-                && getTestTransportInfo(nc).settingsRedacted;
+                && ti.locationRedacted
+                && ti.localMacAddressRedacted
+                && ti.settingsRedacted;
     }
 
     @Test
@@ -10478,12 +10476,10 @@ public class ConnectivityServiceTest {
             throws Exception {
         setUpConnectivityDiagnosticsCallback();
 
-        // Block until all other events are done processing.
-        HandlerUtils.waitForIdle(mCsHandlerThread, TIMEOUT_MS);
-
         // Verify onConnectivityReport fired
-        verify(mConnectivityDiagnosticsCallback).onConnectivityReportAvailable(
-                argThat(report -> areConnDiagCapsRedacted(report.getNetworkCapabilities())));
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
+                .onConnectivityReportAvailable(argThat(report ->
+                        areConnDiagCapsRedacted(report.getNetworkCapabilities())));
     }
 
     @Test
@@ -10494,11 +10490,8 @@ public class ConnectivityServiceTest {
         // cellular network agent
         mCellNetworkAgent.notifyDataStallSuspected();
 
-        // Block until all other events are done processing.
-        HandlerUtils.waitForIdle(mCsHandlerThread, TIMEOUT_MS);
-
         // Verify onDataStallSuspected fired
-        verify(mConnectivityDiagnosticsCallback).onDataStallSuspected(
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS)).onDataStallSuspected(
                 argThat(report -> areConnDiagCapsRedacted(report.getNetworkCapabilities())));
     }
 
@@ -10506,26 +10499,72 @@ public class ConnectivityServiceTest {
     public void testConnectivityDiagnosticsCallbackOnConnectivityReported() throws Exception {
         setUpConnectivityDiagnosticsCallback();
 
+        // reset to ignore callbacks from setup
+        reset(mConnectivityDiagnosticsCallback);
+
         final Network n = mCellNetworkAgent.getNetwork();
         final boolean hasConnectivity = true;
         mService.reportNetworkConnectivity(n, hasConnectivity);
 
-        // Block until all other events are done processing.
-        HandlerUtils.waitForIdle(mCsHandlerThread, TIMEOUT_MS);
-
         // Verify onNetworkConnectivityReported fired
-        verify(mConnectivityDiagnosticsCallback)
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
                 .onNetworkConnectivityReported(eq(n), eq(hasConnectivity));
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
+                .onConnectivityReportAvailable(
+                        argThat(report ->
+                                areConnDiagCapsRedacted(report.getNetworkCapabilities())));
 
         final boolean noConnectivity = false;
         mService.reportNetworkConnectivity(n, noConnectivity);
 
+        // Wait for onNetworkConnectivityReported to fire
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
+                .onNetworkConnectivityReported(eq(n), eq(noConnectivity));
+
+        // Also expect a ConnectivityReport after NetworkMonitor asynchronously re-validates
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS).times(2))
+                .onConnectivityReportAvailable(
+                        argThat(report ->
+                                areConnDiagCapsRedacted(report.getNetworkCapabilities())));
+    }
+
+    @Test
+    public void testConnectivityDiagnosticsCallbackOnConnectivityReportedSeparateUid()
+            throws Exception {
+        setUpConnectivityDiagnosticsCallback();
+
+        // reset to ignore callbacks from setup
+        reset(mConnectivityDiagnosticsCallback);
+
+        // report known Connectivity from a different uid. Verify that network is not re-validated
+        // and this callback is not notified.
+        final Network n = mCellNetworkAgent.getNetwork();
+        final boolean hasConnectivity = true;
+        doAsUid(Process.myUid() + 1, () -> mService.reportNetworkConnectivity(n, hasConnectivity));
+
         // Block until all other events are done processing.
         HandlerUtils.waitForIdle(mCsHandlerThread, TIMEOUT_MS);
 
+        // Verify onNetworkConnectivityReported did not fire
+        verify(mConnectivityDiagnosticsCallback, never())
+                .onNetworkConnectivityReported(any(), anyBoolean());
+        verify(mConnectivityDiagnosticsCallback, never())
+                .onConnectivityReportAvailable(any());
+
+        // report different Connectivity from a different uid. Verify that network is re-validated
+        // and that this callback is notified.
+        final boolean noConnectivity = false;
+        doAsUid(Process.myUid() + 1, () -> mService.reportNetworkConnectivity(n, noConnectivity));
+
         // Wait for onNetworkConnectivityReported to fire
-        verify(mConnectivityDiagnosticsCallback)
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
                 .onNetworkConnectivityReported(eq(n), eq(noConnectivity));
+
+        // Also expect a ConnectivityReport after NetworkMonitor asynchronously re-validates
+        verify(mConnectivityDiagnosticsCallback, timeout(TIMEOUT_MS))
+                .onConnectivityReportAvailable(
+                        argThat(report ->
+                                areConnDiagCapsRedacted(report.getNetworkCapabilities())));
     }
 
     @Test
@@ -10647,11 +10686,11 @@ public class ConnectivityServiceTest {
         if (add) {
             inOrder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(
                     new NativeUidRangeConfig(mMockVpn.getNetwork().getNetId(),
-                            toUidRangeStableParcels(vpnRanges), PREFERENCE_PRIORITY_VPN));
+                            toUidRangeStableParcels(vpnRanges), PREFERENCE_ORDER_VPN));
         } else {
             inOrder.verify(mMockNetd, times(1)).networkRemoveUidRangesParcel(
                     new NativeUidRangeConfig(mMockVpn.getNetwork().getNetId(),
-                            toUidRangeStableParcels(vpnRanges), PREFERENCE_PRIORITY_VPN));
+                            toUidRangeStableParcels(vpnRanges), PREFERENCE_ORDER_VPN));
         }
 
         inOrder.verify(mMockNetd, times(1)).socketDestroy(eq(toUidRangeStableParcels(vpnRanges)),
@@ -10679,7 +10718,7 @@ public class ConnectivityServiceTest {
         verify(mProxyTracker, never()).sendProxyBroadcast();
 
         // Update to new range which is old range minus APP1, i.e. only APP2
-        final Set<UidRange> newRanges = new HashSet<>(Arrays.asList(
+        final Set<UidRange> newRanges = new HashSet<>(asList(
                 new UidRange(vpnRange.start, APP1_UID - 1),
                 new UidRange(APP1_UID + 1, vpnRange.stop)));
         mMockVpn.setUids(newRanges);
@@ -11125,7 +11164,7 @@ public class ConnectivityServiceTest {
                         .createNrisFromOemNetworkPreferences(
                                 createDefaultOemNetworkPreferences(prefToTest));
         final NetworkRequestInfo nri = nris.iterator().next();
-        assertEquals(PREFERENCE_PRIORITY_OEM, nri.mPreferencePriority);
+        assertEquals(PREFERENCE_ORDER_OEM, nri.mPreferenceOrder);
         final List<NetworkRequest> mRequests = nri.mRequests;
         assertEquals(expectedNumOfNris, nris.size());
         assertEquals(expectedNumOfRequests, mRequests.size());
@@ -11155,7 +11194,7 @@ public class ConnectivityServiceTest {
                         .createNrisFromOemNetworkPreferences(
                                 createDefaultOemNetworkPreferences(prefToTest));
         final NetworkRequestInfo nri = nris.iterator().next();
-        assertEquals(PREFERENCE_PRIORITY_OEM, nri.mPreferencePriority);
+        assertEquals(PREFERENCE_ORDER_OEM, nri.mPreferenceOrder);
         final List<NetworkRequest> mRequests = nri.mRequests;
         assertEquals(expectedNumOfNris, nris.size());
         assertEquals(expectedNumOfRequests, mRequests.size());
@@ -11182,7 +11221,7 @@ public class ConnectivityServiceTest {
                         .createNrisFromOemNetworkPreferences(
                                 createDefaultOemNetworkPreferences(prefToTest));
         final NetworkRequestInfo nri = nris.iterator().next();
-        assertEquals(PREFERENCE_PRIORITY_OEM, nri.mPreferencePriority);
+        assertEquals(PREFERENCE_ORDER_OEM, nri.mPreferenceOrder);
         final List<NetworkRequest> mRequests = nri.mRequests;
         assertEquals(expectedNumOfNris, nris.size());
         assertEquals(expectedNumOfRequests, mRequests.size());
@@ -11206,7 +11245,7 @@ public class ConnectivityServiceTest {
                         .createNrisFromOemNetworkPreferences(
                                 createDefaultOemNetworkPreferences(prefToTest));
         final NetworkRequestInfo nri = nris.iterator().next();
-        assertEquals(PREFERENCE_PRIORITY_OEM, nri.mPreferencePriority);
+        assertEquals(PREFERENCE_ORDER_OEM, nri.mPreferenceOrder);
         final List<NetworkRequest> mRequests = nri.mRequests;
         assertEquals(expectedNumOfNris, nris.size());
         assertEquals(expectedNumOfRequests, mRequests.size());
@@ -11280,7 +11319,7 @@ public class ConnectivityServiceTest {
         final int secondUserTestPackageUid = UserHandle.getUid(SECONDARY_USER, TEST_PACKAGE_UID);
         final int thirdUserTestPackageUid = UserHandle.getUid(TERTIARY_USER, TEST_PACKAGE_UID);
         when(mUserManager.getUserHandles(anyBoolean())).thenReturn(
-                Arrays.asList(PRIMARY_USER_HANDLE, SECONDARY_USER_HANDLE, TERTIARY_USER_HANDLE));
+                asList(PRIMARY_USER_HANDLE, SECONDARY_USER_HANDLE, TERTIARY_USER_HANDLE));
 
         // Arrange PackageManager mocks testing for users who have and don't have a package.
         mockGetApplicationInfoThrowsNameNotFound(TEST_PACKAGE_NAME, PRIMARY_USER_HANDLE);
@@ -11897,11 +11936,11 @@ public class ConnectivityServiceTest {
         verify(mMockNetd, times(addUidRangesTimes)).networkAddUidRangesParcel(argThat(config ->
                 (useAnyIdForAdd ? true : addUidRangesNetId == config.netId)
                         && Arrays.equals(addedUidRanges, config.uidRanges)
-                        && PREFERENCE_PRIORITY_OEM == config.subPriority));
+                        && PREFERENCE_ORDER_OEM == config.subPriority));
         verify(mMockNetd, times(removeUidRangesTimes)).networkRemoveUidRangesParcel(
                 argThat(config -> (useAnyIdForRemove ? true : removeUidRangesNetId == config.netId)
                         && Arrays.equals(removedUidRanges, config.uidRanges)
-                        && PREFERENCE_PRIORITY_OEM == config.subPriority));
+                        && PREFERENCE_ORDER_OEM == config.subPriority));
         if (shouldDestroyNetwork) {
             verify(mMockNetd, times(1))
                     .networkDestroy((useAnyIdForRemove ? anyInt() : eq(removeUidRangesNetId)));
@@ -12227,7 +12266,7 @@ public class ConnectivityServiceTest {
         final int secondUser = 10;
         final UserHandle secondUserHandle = new UserHandle(secondUser);
         when(mUserManager.getUserHandles(anyBoolean())).thenReturn(
-                Arrays.asList(PRIMARY_USER_HANDLE, secondUserHandle));
+                asList(PRIMARY_USER_HANDLE, secondUserHandle));
 
         // Arrange PackageManager mocks
         final int secondUserTestPackageUid = UserHandle.getUid(secondUser, TEST_PACKAGE_UID);
@@ -12268,7 +12307,7 @@ public class ConnectivityServiceTest {
         final int secondUser = 10;
         final UserHandle secondUserHandle = new UserHandle(secondUser);
         when(mUserManager.getUserHandles(anyBoolean())).thenReturn(
-                Arrays.asList(PRIMARY_USER_HANDLE));
+                asList(PRIMARY_USER_HANDLE));
 
         // Arrange PackageManager mocks
         final int secondUserTestPackageUid = UserHandle.getUid(secondUser, TEST_PACKAGE_UID);
@@ -12296,7 +12335,7 @@ public class ConnectivityServiceTest {
 
         // Send a broadcast indicating a user was added.
         when(mUserManager.getUserHandles(anyBoolean())).thenReturn(
-                Arrays.asList(PRIMARY_USER_HANDLE, secondUserHandle));
+                asList(PRIMARY_USER_HANDLE, secondUserHandle));
         final Intent addedIntent = new Intent(ACTION_USER_ADDED);
         addedIntent.putExtra(Intent.EXTRA_USER, UserHandle.of(secondUser));
         processBroadcast(addedIntent);
@@ -12309,7 +12348,7 @@ public class ConnectivityServiceTest {
 
         // Send a broadcast indicating a user was removed.
         when(mUserManager.getUserHandles(anyBoolean())).thenReturn(
-                Arrays.asList(PRIMARY_USER_HANDLE));
+                asList(PRIMARY_USER_HANDLE));
         final Intent removedIntent = new Intent(ACTION_USER_REMOVED);
         removedIntent.putExtra(Intent.EXTRA_USER, UserHandle.of(secondUser));
         processBroadcast(removedIntent);
@@ -13056,7 +13095,7 @@ public class ConnectivityServiceTest {
         // is not handled specially, the rules are always active as long as a preference is set.
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
                 mCellNetworkAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                PREFERENCE_ORDER_PROFILE));
 
         // The enterprise network is not ready yet.
         assertNoCallbacks(mSystemDefaultNetworkCallback, mDefaultNetworkCallback,
@@ -13071,11 +13110,10 @@ public class ConnectivityServiceTest {
         inOrder.verify(mMockNetd).networkCreate(
                 nativeNetworkConfigPhysical(workAgent.getNetwork().netId, INetd.PERMISSION_SYSTEM));
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
-                workAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent.getNetwork().netId, uidRangeFor(testHandle), PREFERENCE_ORDER_PROFILE));
         inOrder.verify(mMockNetd).networkRemoveUidRangesParcel(new NativeUidRangeConfig(
                 mCellNetworkAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                PREFERENCE_ORDER_PROFILE));
 
         // Make sure changes to the work agent send callbacks to the app in the work profile, but
         // not to the other apps.
@@ -13125,7 +13163,7 @@ public class ConnectivityServiceTest {
         assertNoCallbacks(mSystemDefaultNetworkCallback, mDefaultNetworkCallback);
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
                 mCellNetworkAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                PREFERENCE_ORDER_PROFILE));
         inOrder.verify(mMockNetd).networkDestroy(workAgent.getNetwork().netId);
 
         mCellNetworkAgent.disconnect();
@@ -13149,8 +13187,7 @@ public class ConnectivityServiceTest {
         inOrder.verify(mMockNetd).networkCreate(nativeNetworkConfigPhysical(
                 workAgent2.getNetwork().netId, INetd.PERMISSION_SYSTEM));
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
-                workAgent2.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent2.getNetwork().netId, uidRangeFor(testHandle), PREFERENCE_ORDER_PROFILE));
 
         workAgent2.setNetworkValid(true /* isStrictMode */);
         workAgent2.mNetworkMonitor.forceReevaluation(Process.myUid());
@@ -13196,8 +13233,7 @@ public class ConnectivityServiceTest {
         inOrder.verify(mMockNetd).networkCreate(nativeNetworkConfigPhysical(
                 mCellNetworkAgent.getNetwork().netId, INetd.PERMISSION_NONE));
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
-                workAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent.getNetwork().netId, uidRangeFor(testHandle), PREFERENCE_ORDER_PROFILE));
 
         registerDefaultNetworkCallbacks();
 
@@ -13212,8 +13248,7 @@ public class ConnectivityServiceTest {
         mProfileDefaultNetworkCallback.expectAvailableCallbacksValidated(mCellNetworkAgent);
         assertNoCallbacks(mSystemDefaultNetworkCallback, mDefaultNetworkCallback);
         inOrder.verify(mMockNetd).networkRemoveUidRangesParcel(new NativeUidRangeConfig(
-                workAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent.getNetwork().netId, uidRangeFor(testHandle), PREFERENCE_ORDER_PROFILE));
 
         workAgent.disconnect();
         mCellNetworkAgent.disconnect();
@@ -13258,8 +13293,7 @@ public class ConnectivityServiceTest {
                 r -> r.run(), listener);
         listener.expectOnComplete();
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
-                workAgent.getNetwork().netId, uidRangeFor(testHandle2),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent.getNetwork().netId, uidRangeFor(testHandle2), PREFERENCE_ORDER_PROFILE));
 
         mProfileDefaultNetworkCallback.expectAvailableCallbacksValidated(workAgent);
         assertNoCallbacks(mSystemDefaultNetworkCallback, mDefaultNetworkCallback,
@@ -13269,8 +13303,7 @@ public class ConnectivityServiceTest {
                 r -> r.run(), listener);
         listener.expectOnComplete();
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
-                workAgent.getNetwork().netId, uidRangeFor(testHandle4),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent.getNetwork().netId, uidRangeFor(testHandle4), PREFERENCE_ORDER_PROFILE));
 
         app4Cb.expectAvailableCallbacksValidated(workAgent);
         assertNoCallbacks(mSystemDefaultNetworkCallback, mDefaultNetworkCallback,
@@ -13280,8 +13313,7 @@ public class ConnectivityServiceTest {
                 r -> r.run(), listener);
         listener.expectOnComplete();
         inOrder.verify(mMockNetd).networkRemoveUidRangesParcel(new NativeUidRangeConfig(
-                workAgent.getNetwork().netId, uidRangeFor(testHandle2),
-                PREFERENCE_PRIORITY_PROFILE));
+                workAgent.getNetwork().netId, uidRangeFor(testHandle2), PREFERENCE_ORDER_PROFILE));
 
         mProfileDefaultNetworkCallback.expectAvailableCallbacksValidated(mCellNetworkAgent);
         assertNoCallbacks(mSystemDefaultNetworkCallback, mDefaultNetworkCallback,
@@ -13310,7 +13342,7 @@ public class ConnectivityServiceTest {
                 mCellNetworkAgent.getNetwork().netId, INetd.PERMISSION_NONE));
         inOrder.verify(mMockNetd).networkAddUidRangesParcel(new NativeUidRangeConfig(
                 mCellNetworkAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                PREFERENCE_ORDER_PROFILE));
 
         final Intent removedIntent = new Intent(ACTION_USER_REMOVED);
         removedIntent.putExtra(Intent.EXTRA_USER, testHandle);
@@ -13318,7 +13350,7 @@ public class ConnectivityServiceTest {
 
         inOrder.verify(mMockNetd).networkRemoveUidRangesParcel(new NativeUidRangeConfig(
                 mCellNetworkAgent.getNetwork().netId, uidRangeFor(testHandle),
-                PREFERENCE_PRIORITY_PROFILE));
+                PREFERENCE_ORDER_PROFILE));
     }
 
     /**
@@ -13523,7 +13555,7 @@ public class ConnectivityServiceTest {
         assertEquals(1, nris.size());
         assertTrue(nri.isMultilayerRequest());
         assertEquals(nri.getUids(), uidRangesForUids(uids));
-        assertEquals(PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED, nri.mPreferencePriority);
+        assertEquals(PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED, nri.mPreferenceOrder);
     }
 
     /**
@@ -13575,7 +13607,7 @@ public class ConnectivityServiceTest {
         final Set<Integer> uids1 = Set.of(PRIMARY_USER_HANDLE.getUid(TEST_PACKAGE_UID));
         final UidRangeParcel[] uidRanges1 = toUidRangeStableParcels(uidRangesForUids(uids1));
         final NativeUidRangeConfig config1 = new NativeUidRangeConfig(cellNetId, uidRanges1,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         setAndUpdateMobileDataPreferredUids(uids1);
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(config1);
         inorder.verify(mMockNetd, never()).networkRemoveUidRangesParcel(any());
@@ -13587,7 +13619,7 @@ public class ConnectivityServiceTest {
                 SECONDARY_USER_HANDLE.getUid(TEST_PACKAGE_UID));
         final UidRangeParcel[] uidRanges2 = toUidRangeStableParcels(uidRangesForUids(uids2));
         final NativeUidRangeConfig config2 = new NativeUidRangeConfig(cellNetId, uidRanges2,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         setAndUpdateMobileDataPreferredUids(uids2);
         inorder.verify(mMockNetd, times(1)).networkRemoveUidRangesParcel(config1);
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(config2);
@@ -13635,7 +13667,7 @@ public class ConnectivityServiceTest {
         final Set<Integer> uids = Set.of(PRIMARY_USER_HANDLE.getUid(TEST_PACKAGE_UID));
         final UidRangeParcel[] uidRanges = toUidRangeStableParcels(uidRangesForUids(uids));
         final NativeUidRangeConfig wifiConfig = new NativeUidRangeConfig(wifiNetId, uidRanges,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         setAndUpdateMobileDataPreferredUids(uids);
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(wifiConfig);
         inorder.verify(mMockNetd, never()).networkRemoveUidRangesParcel(any());
@@ -13651,7 +13683,7 @@ public class ConnectivityServiceTest {
 
         final int cellNetId = mCellNetworkAgent.getNetwork().netId;
         final NativeUidRangeConfig cellConfig = new NativeUidRangeConfig(cellNetId, uidRanges,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         inorder.verify(mMockNetd, times(1)).networkCreate(nativeNetworkConfigPhysical(
                 cellNetId, INetd.PERMISSION_NONE));
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(cellConfig);
@@ -13680,7 +13712,7 @@ public class ConnectivityServiceTest {
 
         final int cellNetId2 = mCellNetworkAgent.getNetwork().netId;
         final NativeUidRangeConfig cellConfig2 = new NativeUidRangeConfig(cellNetId2, uidRanges,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         inorder.verify(mMockNetd, times(1)).networkCreate(nativeNetworkConfigPhysical(
                 cellNetId2, INetd.PERMISSION_NONE));
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(cellConfig2);
@@ -13782,7 +13814,7 @@ public class ConnectivityServiceTest {
         final int[] uids1 = new int[] { PRIMARY_USER_HANDLE.getUid(TEST_PACKAGE_UID) };
         final UidRangeParcel[] uidRanges1 = toUidRangeStableParcels(uidRangesForUids(uids1));
         final NativeUidRangeConfig config1 = new NativeUidRangeConfig(cellNetId, uidRanges1,
-                PREFERENCE_PRIORITY_OEM);
+                PREFERENCE_ORDER_OEM);
         setupSetOemNetworkPreferenceForPreferenceTest(networkPref, uidRanges1, TEST_PACKAGE_NAME);
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(config1);
         inorder.verify(mMockNetd, never()).networkRemoveUidRangesParcel(any());
@@ -13796,7 +13828,7 @@ public class ConnectivityServiceTest {
                 r -> r.run(), listener);
         listener.expectOnComplete();
         final NativeUidRangeConfig config2 = new NativeUidRangeConfig(workAgent.getNetwork().netId,
-                uidRangeFor(testHandle), PREFERENCE_PRIORITY_PROFILE);
+                uidRangeFor(testHandle), PREFERENCE_ORDER_PROFILE);
         inorder.verify(mMockNetd).networkCreate(nativeNetworkConfigPhysical(
                 workAgent.getNetwork().netId, INetd.PERMISSION_SYSTEM));
         inorder.verify(mMockNetd, never()).networkRemoveUidRangesParcel(any());
@@ -13806,7 +13838,7 @@ public class ConnectivityServiceTest {
         final Set<Integer> uids2 = Set.of(PRIMARY_USER_HANDLE.getUid(TEST_PACKAGE_UID2));
         final UidRangeParcel[] uidRanges2 = toUidRangeStableParcels(uidRangesForUids(uids2));
         final NativeUidRangeConfig config3 = new NativeUidRangeConfig(cellNetId, uidRanges2,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         setAndUpdateMobileDataPreferredUids(uids2);
         inorder.verify(mMockNetd, never()).networkRemoveUidRangesParcel(any());
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(config3);
@@ -13815,7 +13847,7 @@ public class ConnectivityServiceTest {
         final Set<Integer> uids3 = Set.of(PRIMARY_USER_HANDLE.getUid(TEST_PACKAGE_UID3));
         final UidRangeParcel[] uidRanges3 = toUidRangeStableParcels(uidRangesForUids(uids3));
         final NativeUidRangeConfig config4 = new NativeUidRangeConfig(cellNetId, uidRanges3,
-                PREFERENCE_PRIORITY_OEM);
+                PREFERENCE_ORDER_OEM);
         setupSetOemNetworkPreferenceForPreferenceTest(networkPref, uidRanges3, "com.android.test");
         inorder.verify(mMockNetd, times(1)).networkRemoveUidRangesParcel(config1);
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(config4);
@@ -13829,7 +13861,7 @@ public class ConnectivityServiceTest {
 
         // Set MOBILE_DATA_PREFERRED_UIDS setting again with same uid as oem network preference.
         final NativeUidRangeConfig config6 = new NativeUidRangeConfig(cellNetId, uidRanges3,
-                PREFERENCE_PRIORITY_MOBILE_DATA_PREFERERRED);
+                PREFERENCE_ORDER_MOBILE_DATA_PREFERERRED);
         setAndUpdateMobileDataPreferredUids(uids3);
         inorder.verify(mMockNetd, times(1)).networkRemoveUidRangesParcel(config3);
         inorder.verify(mMockNetd, times(1)).networkAddUidRangesParcel(config6);

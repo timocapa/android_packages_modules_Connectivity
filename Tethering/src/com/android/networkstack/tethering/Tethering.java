@@ -2354,6 +2354,9 @@ public class Tethering {
         pw.println("Tethering:");
         pw.increaseIndent();
 
+        pw.println("Callbacks registered: "
+                + mTetheringEventCallbacks.getRegisteredCallbackCount());
+
         pw.println("Configuration:");
         pw.increaseIndent();
         final TetheringConfiguration cfg = mConfig;

@@ -294,7 +294,7 @@ public class ConnectivityDiagnosticsManagerTest {
         final String interfaceName =
                 mConnectivityManager.getLinkProperties(network).getInterfaceName();
         connDiagsCallback.expectOnConnectivityReportAvailable(
-                network, interfaceName, TRANSPORT_CELLULAR);
+                network, interfaceName, TRANSPORT_CELLULAR, NETWORK_VALIDATION_RESULT_VALID);
         connDiagsCallback.assertNoCallback();
     }
 
@@ -425,16 +425,11 @@ public class ConnectivityDiagnosticsManagerTest {
 
         cb.expectOnNetworkConnectivityReported(mTestNetwork, hasConnectivity);
 
-        // if hasConnectivity does not match the network's known connectivity, it will be
-        // revalidated which will trigger another onConnectivityReportAvailable callback.
-        if (!hasConnectivity) {
+        // All calls to #onNetworkConnectivityReported are expected to be accompanied by a call to
+        // #onConnectivityReportAvailable for S+ (for R, ConnectivityReports were only sent when the
+        // Network was re-validated - when reported connectivity != known connectivity).
+        if (SdkLevel.isAtLeastS() || !hasConnectivity) {
             cb.expectOnConnectivityReportAvailable(mTestNetwork, interfaceName);
-        } else if (SdkLevel.isAtLeastS()) {
-            // All calls to #onNetworkConnectivityReported are expected to be accompanied by a call
-            // to #onConnectivityReportAvailable after a mainline update in the S timeframe.
-            // Optionally validate this, but do not fail if it does not exist.
-            cb.maybeVerifyOnConnectivityReportAvailable(mTestNetwork, interfaceName, TRANSPORT_TEST,
-                    false /* requireCallbackFired */);
         }
 
         cb.assertNoCallback();
@@ -487,25 +482,21 @@ public class ConnectivityDiagnosticsManagerTest {
 
         public void expectOnConnectivityReportAvailable(
                 @NonNull Network network, @NonNull String interfaceName) {
+            // Test Networks both do not require validation and are not tested for validation. This
+            // results in the validation result being reported as SKIPPED for S+ (for R, the
+            // platform marked these Networks as VALID).
+            final int expectedNetworkValidationResult =
+                    SdkLevel.isAtLeastS()
+                            ? NETWORK_VALIDATION_RESULT_SKIPPED
+                            : NETWORK_VALIDATION_RESULT_VALID;
             expectOnConnectivityReportAvailable(
-                    network, interfaceName, TRANSPORT_TEST);
+                    network, interfaceName, TRANSPORT_TEST, expectedNetworkValidationResult);
         }
 
         public void expectOnConnectivityReportAvailable(@NonNull Network network,
-                @NonNull String interfaceName, int transportType) {
-            maybeVerifyOnConnectivityReportAvailable(network, interfaceName, transportType,
-                    true /* requireCallbackFired */);
-        }
-
-        public void maybeVerifyOnConnectivityReportAvailable(@NonNull Network network,
-                @NonNull String interfaceName, int transportType, boolean requireCallbackFired) {
+                @NonNull String interfaceName, int transportType, int expectedValidationResult) {
             final ConnectivityReport result =
                     (ConnectivityReport) mHistory.poll(CALLBACK_TIMEOUT_MILLIS, x -> true);
-
-            // If callback is not required and there is no report, exit early.
-            if (!requireCallbackFired && result == null) {
-                return;
-            }
             assertEquals(network, result.getNetwork());
 
             final NetworkCapabilities nc = result.getNetworkCapabilities();
@@ -517,15 +508,8 @@ public class ConnectivityDiagnosticsManagerTest {
             final PersistableBundle extras = result.getAdditionalInfo();
             assertTrue(extras.containsKey(KEY_NETWORK_VALIDATION_RESULT));
             final int actualValidationResult = extras.getInt(KEY_NETWORK_VALIDATION_RESULT);
-
-            // Allow RESULT_VALID for networks that are expected to be skipped. Android S shipped
-            // with validation results being reported as VALID, but the behavior will be updated via
-            // mainline update. Allow both behaviors, and let MTS enforce stricter behavior
-            if (actualValidationResult != NETWORK_VALIDATION_RESULT_SKIPPED
-                    && actualValidationResult != NETWORK_VALIDATION_RESULT_VALID) {
-                fail("Network validation result was incorrect; expected skipped or valid, but "
-                        + "got " + actualValidationResult);
-            }
+            assertEquals("Network validation result is incorrect",
+                    expectedValidationResult, actualValidationResult);
 
             assertTrue(extras.containsKey(KEY_NETWORK_PROBES_SUCCEEDED_BITMASK));
             final int probesSucceeded = extras.getInt(KEY_NETWORK_VALIDATION_RESULT);
