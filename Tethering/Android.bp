@@ -94,7 +94,7 @@ cc_library {
     min_sdk_version: "30",
     header_libs: [
         "bpf_syscall_wrappers",
-        "bpf_tethering_headers",
+        "bpf_connectivity_headers",
     ],
     srcs: [
         "jni/*.cpp",
@@ -179,7 +179,11 @@ android_app {
 
 android_app {
     name: "TetheringNext",
-    defaults: ["TetheringAppDefaults", "TetheringApiLevel"],
+    defaults: [
+        "TetheringAppDefaults",
+        "TetheringApiLevel",
+        "ConnectivityNextEnableDefaults",
+    ],
     static_libs: ["TetheringApiCurrentLib"],
     certificate: "networkstack",
     manifest: "AndroidManifest.xml",
