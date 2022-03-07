@@ -40,6 +40,7 @@
 #include <android-base/unique_fd.h>
 #include <netdutils/StatusOr.h>
 #include <netdutils/Syscalls.h>
+#include <netdutils/UidConstants.h>
 #include <netdutils/Utils.h>
 #include <private/android_filesystem_config.h>
 
@@ -74,6 +75,7 @@ const char* TrafficController::LOCAL_DOZABLE = "fw_dozable";
 const char* TrafficController::LOCAL_STANDBY = "fw_standby";
 const char* TrafficController::LOCAL_POWERSAVE = "fw_powersave";
 const char* TrafficController::LOCAL_RESTRICTED = "fw_restricted";
+const char* TrafficController::LOCAL_LOW_POWER_STANDBY = "fw_low_power_standby";
 
 static_assert(BPF_PERMISSION_INTERNET == INetd::PERMISSION_INTERNET,
               "Mismatch between BPF and AIDL permissions: PERMISSION_INTERNET");
@@ -96,6 +98,7 @@ const std::string uidMatchTypeToString(uint8_t match) {
     FLAG_MSG_TRANS(matchType, STANDBY_MATCH, match);
     FLAG_MSG_TRANS(matchType, POWERSAVE_MATCH, match);
     FLAG_MSG_TRANS(matchType, RESTRICTED_MATCH, match);
+    FLAG_MSG_TRANS(matchType, LOW_POWER_STANDBY_MATCH, match);
     FLAG_MSG_TRANS(matchType, IIF_MATCH, match);
     if (match) {
         return StringPrintf("Unknown match: %u", match);
@@ -425,6 +428,8 @@ FirewallType TrafficController::getFirewallType(ChildChain chain) {
             return ALLOWLIST;
         case RESTRICTED:
             return ALLOWLIST;
+        case LOW_POWER_STANDBY:
+            return ALLOWLIST;
         case NONE:
         default:
             return DENYLIST;
@@ -446,6 +451,9 @@ int TrafficController::changeUidOwnerRule(ChildChain chain, uid_t uid, FirewallR
             break;
         case RESTRICTED:
             res = updateOwnerMapEntry(RESTRICTED_MATCH, uid, rule, type);
+            break;
+        case LOW_POWER_STANDBY:
+            res = updateOwnerMapEntry(LOW_POWER_STANDBY_MATCH, uid, rule, type);
             break;
         case NONE:
         default:
@@ -525,6 +533,8 @@ int TrafficController::replaceUidOwnerMap(const std::string& name, bool isAllowl
         res = replaceRulesInMap(POWERSAVE_MATCH, uids);
     } else if (!name.compare(LOCAL_RESTRICTED)) {
         res = replaceRulesInMap(RESTRICTED_MATCH, uids);
+    } else if (!name.compare(LOCAL_LOW_POWER_STANDBY)) {
+        res = replaceRulesInMap(LOW_POWER_STANDBY_MATCH, uids);
     } else {
         ALOGE("unknown chain name: %s", name.c_str());
         return -EINVAL;
@@ -560,6 +570,9 @@ int TrafficController::toggleUidOwnerMap(ChildChain chain, bool enable) {
             break;
         case RESTRICTED:
             match = RESTRICTED_MATCH;
+            break;
+        case LOW_POWER_STANDBY:
+            match = LOW_POWER_STANDBY_MATCH;
             break;
         default:
             return -EINVAL;
@@ -681,8 +694,6 @@ void dumpBpfMap(const std::string& mapName, DumpWriter& dw, const std::string& h
         dw.println(header);
     }
 }
-
-const String16 TrafficController::DUMP_KEYWORD = String16("trafficcontroller");
 
 void TrafficController::dump(DumpWriter& dw, bool verbose) {
     std::lock_guard guard(mMutex);
