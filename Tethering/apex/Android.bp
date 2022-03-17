@@ -38,10 +38,11 @@ enable_tethering_next_apex = true
 
 apex {
     name: "com.android.tethering",
-    defaults: ["ConnectivityApexDefaults"],
+    defaults: [
+        "ConnectivityApexDefaults",
+        "r-launched-apex-module",
+    ],
     compile_multilib: "both",
-    updatable: true,
-    min_sdk_version: "30",
     bootclasspath_fragments: [
         "com.android.tethering-bootclasspath-fragment",
     ],
@@ -78,7 +79,10 @@ apex {
         "ServiceConnectivityResources",
         "HalfSheetUX",
     ],
-    prebuilts: ["current_sdkinfo"],
+    prebuilts: [
+        "current_sdkinfo",
+        "privapp_allowlist_com.android.tethering",
+    ],
     manifest: "manifest.json",
     key: "com.android.tethering.key",
     // Indicates that pre-installed version of this apex can be compressed.
