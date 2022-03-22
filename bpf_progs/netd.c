@@ -25,6 +25,7 @@
 #include <linux/ipv6.h>
 #include <linux/pkt_cls.h>
 #include <linux/tcp.h>
+#include <netdutils/UidConstants.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "bpf_net_helpers.h"
@@ -207,6 +208,9 @@ static inline int bpf_owner_match(struct __sk_buff* skb, uint32_t uid, int direc
             return BPF_DROP;
         }
         if ((enabledRules & RESTRICTED_MATCH) && !(uidRules & RESTRICTED_MATCH)) {
+            return BPF_DROP;
+        }
+        if ((enabledRules & LOW_POWER_STANDBY_MATCH) && !(uidRules & LOW_POWER_STANDBY_MATCH)) {
             return BPF_DROP;
         }
     }
