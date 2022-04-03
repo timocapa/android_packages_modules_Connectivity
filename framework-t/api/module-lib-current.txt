@@ -147,7 +147,6 @@ package android.net {
   public final class NetworkStatsHistory implements android.os.Parcelable {
     method public int describeContents();
     method @NonNull public java.util.List<android.net.NetworkStatsHistory.Entry> getEntries();
-    method public static long multiplySafe(long, long, long);
     method public void writeToParcel(@NonNull android.os.Parcel, int);
     field @NonNull public static final android.os.Parcelable.Creator<android.net.NetworkStatsHistory> CREATOR;
   }
