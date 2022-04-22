@@ -86,11 +86,13 @@ java_defaults {
         "net-utils-device-common",
     ],
     static_libs: [
+        "mdns_aidl_interface-lateststable-java",
         "modules-utils-backgroundthread",
         "modules-utils-build",
         "modules-utils-preconditions",
     ],
     libs: [
+        "app-compat-annotations",
         "framework-connectivity-t.stubs.module_lib",
         "unsupportedappusage",
     ],
@@ -153,6 +155,11 @@ java_sdk_library {
         // Vendor libs using hidden APIs
         "//vendor:__subpackages__",
     ],
+}
+
+platform_compat_config {
+    name: "connectivity-platform-compat-config",
+    src: ":framework-connectivity",
 }
 
 cc_library_shared {
