@@ -258,6 +258,7 @@ import com.android.net.module.util.TcUtils;
 import com.android.net.module.util.netlink.InetDiagMessage;
 import com.android.server.connectivity.AutodestructReference;
 import com.android.server.connectivity.CarrierPrivilegeAuthenticator;
+import com.android.server.connectivity.ClatCoordinator;
 import com.android.server.connectivity.ConnectivityFlags;
 import com.android.server.connectivity.DnsManager;
 import com.android.server.connectivity.DnsManager.PrivateDnsValidationUpdate;
@@ -1402,6 +1403,19 @@ public class ConnectivityService extends IConnectivityManager.Stub
          */
         public BpfNetMaps getBpfNetMaps(INetd netd) {
             return new BpfNetMaps(netd);
+        }
+
+        /**
+         * @see ClatCoordinator
+         */
+        public ClatCoordinator getClatCoordinator(INetd netd) {
+            return new ClatCoordinator(
+                new ClatCoordinator.Dependencies() {
+                    @NonNull
+                    public INetd getNetd() {
+                        return netd;
+                    }
+                });
         }
 
         /**
@@ -3266,11 +3280,12 @@ public class ConnectivityService extends IConnectivityManager.Stub
             return;
         }
 
-        pw.print("NetworkProviders for:");
+        pw.println("NetworkProviders for:");
+        pw.increaseIndent();
         for (NetworkProviderInfo npi : mNetworkProviderInfos.values()) {
-            pw.print(" " + npi.name);
+            pw.println(npi.providerId + ": " + npi.name);
         }
-        pw.println();
+        pw.decreaseIndent();
         pw.println();
 
         final NetworkAgentInfo defaultNai = getDefaultNetwork();
@@ -3316,6 +3331,14 @@ public class ConnectivityService extends IConnectivityManager.Stub
         pw.println("Network Requests:");
         pw.increaseIndent();
         dumpNetworkRequests(pw);
+        pw.decreaseIndent();
+        pw.println();
+
+        pw.println("Network Offers:");
+        pw.increaseIndent();
+        for (final NetworkOfferInfo offerInfo : mNetworkOffers) {
+            pw.println(offerInfo.offer);
+        }
         pw.decreaseIndent();
         pw.println();
 
@@ -3669,7 +3692,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 }
                 case NetworkAgent.EVENT_REMOVE_ALL_DSCP_POLICIES: {
                     if (mDscpPolicyTracker != null) {
-                        mDscpPolicyTracker.removeAllDscpPolicies(nai);
+                        mDscpPolicyTracker.removeAllDscpPolicies(nai, true);
                     }
                     break;
                 }
@@ -4410,6 +4433,9 @@ public class ConnectivityService extends IConnectivityManager.Stub
     }
 
     private void destroyNativeNetwork(@NonNull NetworkAgentInfo nai) {
+        if (mDscpPolicyTracker != null) {
+            mDscpPolicyTracker.removeAllDscpPolicies(nai, false);
+        }
         try {
             mNetd.networkDestroy(nai.network.getNetId());
         } catch (RemoteException | ServiceSpecificException e) {
@@ -5464,6 +5490,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @Override
     @Deprecated
     public int getLastTetherError(String iface) {
+        enforceAccessPermission();
         final TetheringManager tm = (TetheringManager) mContext.getSystemService(
                 Context.TETHERING_SERVICE);
         return tm.getLastTetherError(iface);
@@ -5472,6 +5499,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @Override
     @Deprecated
     public String[] getTetherableIfaces() {
+        enforceAccessPermission();
         final TetheringManager tm = (TetheringManager) mContext.getSystemService(
                 Context.TETHERING_SERVICE);
         return tm.getTetherableIfaces();
@@ -5480,6 +5508,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @Override
     @Deprecated
     public String[] getTetheredIfaces() {
+        enforceAccessPermission();
         final TetheringManager tm = (TetheringManager) mContext.getSystemService(
                 Context.TETHERING_SERVICE);
         return tm.getTetheredIfaces();
@@ -5489,6 +5518,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @Override
     @Deprecated
     public String[] getTetheringErroredIfaces() {
+        enforceAccessPermission();
         final TetheringManager tm = (TetheringManager) mContext.getSystemService(
                 Context.TETHERING_SERVICE);
 
@@ -5498,6 +5528,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @Override
     @Deprecated
     public String[] getTetherableUsbRegexs() {
+        enforceAccessPermission();
         final TetheringManager tm = (TetheringManager) mContext.getSystemService(
                 Context.TETHERING_SERVICE);
 
@@ -5507,6 +5538,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
     @Override
     @Deprecated
     public String[] getTetherableWifiRegexs() {
+        enforceAccessPermission();
         final TetheringManager tm = (TetheringManager) mContext.getSystemService(
                 Context.TETHERING_SERVICE);
         return tm.getTetherableWifiRegexs();
