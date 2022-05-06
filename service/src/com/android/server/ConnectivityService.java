@@ -2238,6 +2238,13 @@ public class ConnectivityService extends IConnectivityManager.Stub
                 callingAttributionTag);
     }
 
+    private void redactUnderlyingNetworksForCapabilities(NetworkCapabilities nc, int pid, int uid) {
+        if (nc.getUnderlyingNetworks() != null
+                && !checkNetworkFactoryOrSettingsPermission(pid, uid)) {
+            nc.setUnderlyingNetworks(null);
+        }
+    }
+
     @VisibleForTesting
     NetworkCapabilities networkCapabilitiesRestrictedForCallerPermissions(
             NetworkCapabilities nc, int callerPid, int callerUid) {
@@ -2250,8 +2257,6 @@ public class ConnectivityService extends IConnectivityManager.Stub
         if (!checkSettingsPermission(callerPid, callerUid)) {
             newNc.setUids(null);
             newNc.setSSID(null);
-            // TODO: Processes holding NETWORK_FACTORY should be able to see the underlying networks
-            newNc.setUnderlyingNetworks(null);
         }
         if (newNc.getNetworkSpecifier() != null) {
             newNc.setNetworkSpecifier(newNc.getNetworkSpecifier().redact());
@@ -2265,6 +2270,7 @@ public class ConnectivityService extends IConnectivityManager.Stub
             newNc.setAllowedUids(new ArraySet<>());
             newNc.setSubscriptionIds(Collections.emptySet());
         }
+        redactUnderlyingNetworksForCapabilities(newNc, callerPid, callerUid);
 
         return newNc;
     }
@@ -2858,12 +2864,16 @@ public class ConnectivityService extends IConnectivityManager.Stub
     }
 
     private void enforceNetworkFactoryPermission() {
+        // TODO: Check for the BLUETOOTH_STACK permission once that is in the API surface.
+        if (getCallingUid() == Process.BLUETOOTH_UID) return;
         enforceAnyPermissionOf(
                 android.Manifest.permission.NETWORK_FACTORY,
                 NetworkStack.PERMISSION_MAINLINE_NETWORK_STACK);
     }
 
     private void enforceNetworkFactoryOrSettingsPermission() {
+        // TODO: Check for the BLUETOOTH_STACK permission once that is in the API surface.
+        if (getCallingUid() == Process.BLUETOOTH_UID) return;
         enforceAnyPermissionOf(
                 android.Manifest.permission.NETWORK_SETTINGS,
                 android.Manifest.permission.NETWORK_FACTORY,
@@ -2871,10 +2881,22 @@ public class ConnectivityService extends IConnectivityManager.Stub
     }
 
     private void enforceNetworkFactoryOrTestNetworksPermission() {
+        // TODO: Check for the BLUETOOTH_STACK permission once that is in the API surface.
+        if (getCallingUid() == Process.BLUETOOTH_UID) return;
         enforceAnyPermissionOf(
                 android.Manifest.permission.MANAGE_TEST_NETWORKS,
                 android.Manifest.permission.NETWORK_FACTORY,
                 NetworkStack.PERMISSION_MAINLINE_NETWORK_STACK);
+    }
+
+    private boolean checkNetworkFactoryOrSettingsPermission(int pid, int uid) {
+        return PERMISSION_GRANTED == mContext.checkPermission(
+                android.Manifest.permission.NETWORK_FACTORY, pid, uid)
+                || PERMISSION_GRANTED == mContext.checkPermission(
+                android.Manifest.permission.NETWORK_SETTINGS, pid, uid)
+                || PERMISSION_GRANTED == mContext.checkPermission(
+                NetworkStack.PERMISSION_MAINLINE_NETWORK_STACK, pid, uid)
+                || uid == Process.BLUETOOTH_UID;
     }
 
     private boolean checkSettingsPermission() {
