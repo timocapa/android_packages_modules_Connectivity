@@ -110,6 +110,41 @@ public class FastPairDecoderTest {
     }
 
     @Test
+    public void getBeaconIdType() {
+        assertThat(mDecoder.getBeaconIdType()).isEqualTo(1);
+    }
+
+    @Test
+    public void getCalibratedBeaconTxPower() {
+        FastPairServiceData fastPairServiceData =
+                new FastPairServiceData(LONG_MODEL_ID_HEADER, LONG_MODEL_ID);
+        assertThat(
+                mDecoder.getCalibratedBeaconTxPower(
+                        newBleRecord(fastPairServiceData.createServiceData())))
+                .isNull();
+    }
+
+    @Test
+    public void getServiceDataArray() {
+        FastPairServiceData fastPairServiceData =
+                new FastPairServiceData(LONG_MODEL_ID_HEADER, LONG_MODEL_ID);
+        assertThat(
+                mDecoder.getServiceDataArray(
+                        newBleRecord(fastPairServiceData.createServiceData())))
+                .isEqualTo(Hex.stringToBytes("101122334455667788"));
+    }
+
+    @Test
+    public void hasBloomFilter() {
+        FastPairServiceData fastPairServiceData =
+                new FastPairServiceData(LONG_MODEL_ID_HEADER, LONG_MODEL_ID);
+        assertThat(
+                mDecoder.hasBloomFilter(
+                        newBleRecord(fastPairServiceData.createServiceData())))
+                .isFalse();
+    }
+
+    @Test
     public void hasModelId_allCases() {
         // One type of the format is just the 3-byte model ID. This format has no header byte (all 3
         // service data bytes are the model ID in little endian).
