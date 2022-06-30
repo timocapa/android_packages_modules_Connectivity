@@ -200,7 +200,6 @@ import libcore.io.Streams;
 
 import org.junit.After;
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -3418,8 +3417,8 @@ public class ConnectivityManagerTest {
         }, NETWORK_SETTINGS);
     }
 
-    @Ignore("TODO: temporarily ignore tests until prebuilts are updated")
     @Test @IgnoreUpTo(SC_V2)
+    @AppModeFull(reason = "Socket cannot bind in instant app mode")
     public void testFirewallBlocking() {
         // Following tests affect the actual state of networking on the device after the test.
         // This might cause unexpected behaviour of the device. So, we skip them for now.
