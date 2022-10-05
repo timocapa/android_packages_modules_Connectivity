@@ -95,6 +95,8 @@ android_library {
 cc_library {
     name: "libcom_android_networkstack_tethering_util_jni",
     sdk_version: "30",
+    // Disable sdclang
+    sdclang: false,
     apex_available: [
         "//apex_available:platform", // Used by InProcessTethering
         "com.android.tethering",
